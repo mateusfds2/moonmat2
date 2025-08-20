@@ -1,1 +1,2 @@
-web: bash cloud.sh
+worker: python3 main.py
+
