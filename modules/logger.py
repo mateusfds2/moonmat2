@@ -11,18 +11,12 @@ mongo_client = MongoClient(MONGO_URI)
 db = mongo_client[MONGO_DB]
 collection = db["messages"]
 
-@Client.on_message(filters.all & ~filters.me)
+# Captura todas as mensagens (suas + de outros), exceto mensagens de serviço (ex: "fulano entrou no grupo")
+@Client.on_message(filters.all & ~filters.service)
 async def log_message(client, message):
     try:
         data = {
             "chat_id": message.chat.id,
             "chat_title": getattr(message.chat, "title", None),
             "user_id": getattr(message.from_user, "id", None) if message.from_user else None,
-            "username": getattr(message.from_user, "username", None) if message.from_user else None,
-            "text": message.text if message.text else None,
-            "date": message.date.isoformat() if message.date else None,
-        }
-        collection.insert_one(data)
-        print(f"[LOG] Mensagem salva no MongoDB: {data}")
-    except Exception as e:
-        print(f"Erro ao salvar no MongoDB: {e}")
+            "username": getattr(message.from_user, "username", None) if message.from_user else No
