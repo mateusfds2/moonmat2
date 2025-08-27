@@ -25,16 +25,21 @@ async def log_message(client, message):
         if message.from_user and message.from_user.id == BOT_OFICIAL_ID:
             return
 
+        # Pega texto ou legenda
+        text_content = message.text or message.caption
+
         data = {
             "chat_id": message.chat.id,
             "chat_title": getattr(message.chat, "title", None),
             "user_id": getattr(message.from_user, "id", None) if message.from_user else None,
             "username": getattr(message.from_user, "username", None) if message.from_user else None,
             "outgoing": message.outgoing,
-            "text": message.text if message.text else None,
+            "text": text_content,
+            "has_media": bool(message.media),  # novo campo para identificar mídia
             "date": message.date.isoformat() if message.date else None,
         }
 
+        # força salvar como UTF-8 (garante emojis no Mongo)
         collection.insert_one(data)
         print(f"[LOG] Mensagem salva no MongoDB: {data}")
 
