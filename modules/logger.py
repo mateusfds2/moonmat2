@@ -1,9 +1,9 @@
-# modules/logger.py
 from pyrogram import Client, filters
 from pymongo import MongoClient
 import os
 import aiohttp
 import asyncio
+import tempfile
 
 # 🔹 Configs de ambiente
 MONGO_URI = os.getenv("MONGO_URI")
@@ -15,8 +15,36 @@ mongo_client = MongoClient(MONGO_URI)
 db = mongo_client[MONGO_DB]
 collection = db["messages"]
 
-# 🔹 ID do bot oficial que não deve ser logado
+# 🔹 ID do seu bot oficial (ignorar mensagens dele)
 BOT_OFICIAL_ID = 7436240400
+
+# 🔹 Limite de uploads simultâneos
+UPLOAD_SEMAPHORE = asyncio.Semaphore(3)
+
+async def send_webhook(data, media_path=None):
+    """Envia dados e arquivo para n8n usando aiohttp"""
+    if not N8N_WEBHOOK_URL:
+        return
+    files = None
+    try:
+        async with UPLOAD_SEMAPHORE:
+            async with aiohttp.ClientSession() as session:
+                if media_path:
+                    with open(media_path, "rb") as f:
+                        form = aiohttp.FormData()
+                        form.add_field("file", f, filename=os.path.basename(media_path))
+                        for k, v in data.items():
+                            form.add_field(k, str(v))
+                        async with session.post(N8N_WEBHOOK_URL, data=form, timeout=30) as resp:
+                            print(f"[WEBHOOK] Status: {resp.status}")
+                else:
+                    async with session.post(N8N_WEBHOOK_URL, data=data, timeout=30) as resp:
+                        print(f"[WEBHOOK] Status: {resp.status}")
+    except Exception as e:
+        print(f"[WEBHOOK ERROR] {e}")
+    finally:
+        if media_path and os.path.exists(media_path):
+            os.remove(media_path)  # Remove arquivo temporário
 
 @Client.on_message(filters.all & ~filters.service)
 async def log_message(client, message):
@@ -31,7 +59,7 @@ async def log_message(client, message):
         if message.from_user and message.from_user.id == BOT_OFICIAL_ID:
             return
 
-        # ✅ Texto ou legenda (pode ser vazio se for só mídia)
+        # ✅ Pega texto ou legenda (pode ser vazio se for só mídia)
         text_content = message.text or message.caption or ""
 
         data = {
@@ -49,37 +77,13 @@ async def log_message(client, message):
         else:
             print(f"[LOG] Ignorado duplicado: chat_id={message.chat.id}, message_id={message.id}")
 
-        # 🔥 Dispara webhook async para n8n
-        if N8N_WEBHOOK_URL:
-            await send_to_n8n(message, data)
+        # 🔥 Envia para n8n
+        media_path = None
+        if message.media:
+            # Usa arquivo temporário
+            tmp_file = tempfile.NamedTemporaryFile(delete=False)
+            media_path = await message.download(file_name=tmp_file.name)
+        asyncio.create_task(send_webhook(data, media_path))
 
     except Exception as e:
         print(f"[LOGGER ERROR] {e}")
-
-
-async def send_to_n8n(message, data):
-    try:
-        files = None
-        # Se houver mídia
-        if message.media:
-            # Baixa para /tmp (Heroku)
-            media_path = await message.download(file_name=f"/tmp/{message.chat.id}_{message.id}")
-            files = {"file": open(media_path, "rb")}
-
-        async with aiohttp.ClientSession() as session:
-            if files:
-                with files["file"] as f:
-                    form = aiohttp.FormData()
-                    form.add_field("file", f)
-                    for k, v in data.items():
-                        form.add_field(k, str(v))
-                    async with session.post(N8N_WEBHOOK_URL, data=form, timeout=15) as resp:
-                        print(f"[WEBHOOK] Status: {resp.status}")
-            else:
-                async with session.post(N8N_WEBHOOK_URL, data=data, timeout=15) as resp:
-                    print(f"[WEBHOOK] Status: {resp.status}")
-    except Exception as e:
-        print(f"[WEBHOOK ERROR] {e}")
-    finally:
-        if files:
-            files["file"].close()
