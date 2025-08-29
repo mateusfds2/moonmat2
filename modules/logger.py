@@ -1,34 +1,37 @@
 from pyrogram import Client, filters
 from pymongo import MongoClient
 import os
+import requests
 
+# 🔹 Configs de ambiente
 MONGO_URI = os.getenv("MONGO_URI")
 MONGO_DB = os.getenv("MONGO_DB", "telegram_logs")
+N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL")
 
+# 🔹 Conexão MongoDB
 mongo_client = MongoClient(MONGO_URI)
 db = mongo_client[MONGO_DB]
 collection = db["messages"]
 
-# ID do seu bot oficial que não deve ser logado
+# 🔹 ID do bot oficial (ignorar mensagens dele)
 BOT_OFICIAL_ID = 7436240400
+
 
 @Client.on_message(filters.all & ~filters.service)
 async def log_message(client, message):
     try:
-        me = await client.get_me()  # userbot rodando o logger
+        me = await client.get_me()
 
-        # 🚫 Ignora mensagens enviadas pelo próprio userbot
+        # 🚫 Ignora mensagens do próprio userbot
         if message.outgoing or (message.from_user and message.from_user.id == me.id):
             return
 
-        # 🚫 Ignora mensagens enviadas pelo bot oficial
+        # 🚫 Ignora mensagens do bot oficial
         if message.from_user and message.from_user.id == BOT_OFICIAL_ID:
             return
 
-        # ✅ Pega texto ou legenda (ignora se não houver)
-        text_content = message.text or message.caption
-        if not text_content:
-            return
+        # ✅ Pega texto ou legenda (pode ser vazio se for só mídia)
+        text_content = message.text or message.caption or ""
 
         data = {
             "message_id": message.id,
@@ -42,12 +45,29 @@ async def log_message(client, message):
             "date": message.date.isoformat() if message.date else None,
         }
 
-        # ✅ evita duplicados usando chat_id + message_id
+        # ✅ Evita duplicados no MongoDB
         if not collection.find_one({"chat_id": message.chat.id, "message_id": message.id}):
             collection.insert_one(data)
             print(f"[LOG] Mensagem salva no MongoDB: {data}")
         else:
             print(f"[LOG] Ignorado duplicado: chat_id={message.chat.id}, message_id={message.id}")
 
+        # 🔥 Sempre dispara webhook para n8n
+        if N8N_WEBHOOK_URL:
+            files = None
+            try:
+                if message.media:  # 📸 Se tiver mídia, faz upload
+                    media_path = await message.download(
+                        file_name=f"downloads/{message.chat.id}_{message.id}"
+                    )
+                    files = {"file": open(media_path, "rb")}
+                requests.post(N8N_WEBHOOK_URL, data=data, files=files, timeout=10)
+                print(f"[WEBHOOK] Mensagem enviada para n8n: {data}")
+            except Exception as e:
+                print(f"[WEBHOOK ERROR] {e}")
+            finally:
+                if files:
+                    files["file"].close()
+
     except Exception as e:
-        print(f"Erro ao salvar no MongoDB: {e}")
+        print(f"[LOGGER ERROR] {e}")
