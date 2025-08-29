@@ -2,6 +2,7 @@ from pyrogram import Client, filters
 from pymongo import MongoClient
 import os
 import requests
+import mimetypes
 
 # 🔹 Configs de ambiente
 MONGO_URI = os.getenv("MONGO_URI")
@@ -56,18 +57,32 @@ async def log_message(client, message):
         if N8N_WEBHOOK_URL:
             files = None
             try:
-                if message.media:  # 📸 Se tiver mídia, faz upload
+                if message.media:  # 📸 Se tiver mídia, faz upload com MIME correto
                     media_path = await message.download(
                         file_name=f"downloads/{message.chat.id}_{message.id}"
                     )
-                    files = {"file": open(media_path, "rb")}
+                    mime_type, _ = mimetypes.guess_type(media_path)
+                    if not mime_type:
+                        mime_type = "application/octet-stream"
+
+                    files = {
+                        "file": (
+                            f"{message.id}{os.path.splitext(media_path)[1]}",
+                            open(media_path, "rb"),
+                            mime_type
+                        )
+                    }
+
+                # Envia os dados e o arquivo
                 requests.post(N8N_WEBHOOK_URL, data=data, files=files, timeout=10)
                 print(f"[WEBHOOK] Mensagem enviada para n8n: {data}")
+
             except Exception as e:
                 print(f"[WEBHOOK ERROR] {e}")
+
             finally:
                 if files:
-                    files["file"].close()
+                    files["file"][1].close()  # fecha o arquivo corretamente
 
     except Exception as e:
         print(f"[LOGGER ERROR] {e}")
