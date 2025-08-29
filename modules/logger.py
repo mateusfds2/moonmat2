@@ -1,10 +1,10 @@
-from pyrogram import Client, filters, idle
+from pyrogram import Client, filters
 from pymongo import MongoClient
 import os
 import requests
 import mimetypes
 
-# 🔹 Configurações de ambiente
+# 🔹 Configs de ambiente
 MONGO_URI = os.getenv("MONGO_URI")
 MONGO_DB = os.getenv("MONGO_DB", "telegram_logs")
 N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL")
@@ -17,11 +17,7 @@ collection = db["messages"]
 # 🔹 ID do bot oficial (ignorar mensagens dele)
 BOT_OFICIAL_ID = 7436240400
 
-# 🔹 Inicia o client Pyrogram
-app = Client("moon_userbot")
-
-
-@app.on_message(filters.all & ~filters.service)
+@Client.on_message(filters.all & ~filters.service)
 async def log_message(client, message):
     try:
         me = await client.get_me()
@@ -56,27 +52,29 @@ async def log_message(client, message):
         else:
             print(f"[LOG] Ignorado duplicado: chat_id={message.chat.id}, message_id={message.id}")
 
-        # 🔥 Dispara webhook para n8n
+        # 🔥 Sempre dispara webhook para n8n
         if N8N_WEBHOOK_URL:
             files = None
             try:
-                if message.media:
-                    # 📸 Faz download da mídia
-                    media_path = await message.download(file_name=f"downloads/{message.chat.id}_{message.id}")
+                if message.media:  # 📸 Se tiver mídia, faz download e detecta MIME correto
+                    media_path = await message.download(
+                        file_name=f"downloads/{message.chat.id}_{message.id}"
+                    )
                     mime_type, _ = mimetypes.guess_type(media_path)
-                    if not mime_type:
-                        mime_type = "application/octet-stream"
+                    # Se não for imagem suportada, ignora
+                    if mime_type not in ["image/png", "image/jpeg", "image/gif", "image/webp"]:
+                        print(f"[WEBHOOK WARNING] Arquivo com formato não suportado: {media_path}")
+                        files = None
+                    else:
+                        files = {
+                            "file": (
+                                f"{message.id}{os.path.splitext(media_path)[1]}",
+                                open(media_path, "rb"),
+                                mime_type
+                            )
+                        }
 
-                    files = {
-                        "file": (
-                            f"{message.id}{os.path.splitext(media_path)[1]}",
-                            open(media_path, "rb"),
-                            mime_type
-                        )
-                    }
-
-                # Envia dados + arquivo
-                requests.post(N8N_WEBHOOK_URL, data=data, files=files, timeout=15)
+                requests.post(N8N_WEBHOOK_URL, data=data, files=files, timeout=10)
                 print(f"[WEBHOOK] Mensagem enviada para n8n: {data}")
 
             except Exception as e:
@@ -84,14 +82,7 @@ async def log_message(client, message):
 
             finally:
                 if files:
-                    files["file"][1].close()  # fecha o arquivo corretamente
+                    files["file"][1].close()
 
     except Exception as e:
         print(f"[LOGGER ERROR] {e}")
-
-
-if __name__ == "__main__":
-    print("Moon-Userbot iniciando...")
-    app.start()
-    idle()  # mantém o bot rodando continuamente
-    app.stop()
