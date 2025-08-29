@@ -3,7 +3,7 @@ import requests
 import os
 
 # Configurações do ambiente
-N8N_WEBHOOK_URL = os.getenv(https://webhook.renove.cloud/webhook/logger)  # Defina no .env
+N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL")  # Corrigido: pega do .env
 BOT_OFICIAL_ID = 7436240400  # mesmo parâmetro do arquivo pai
 
 @Client.on_message(filters.all & ~filters.service)
