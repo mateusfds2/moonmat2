@@ -1,10 +1,10 @@
-from pyrogram import Client, filters
+from pyrogram import Client, filters, idle
 from pymongo import MongoClient
 import os
 import requests
 import mimetypes
 
-# 🔹 Configs de ambiente
+# 🔹 Configurações de ambiente
 MONGO_URI = os.getenv("MONGO_URI")
 MONGO_DB = os.getenv("MONGO_DB", "telegram_logs")
 N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL")
@@ -17,11 +17,11 @@ collection = db["messages"]
 # 🔹 ID do bot oficial (ignorar mensagens dele)
 BOT_OFICIAL_ID = 7436240400
 
-# 🔹 Extensões suportadas pelo OpenAI
-OPENAI_IMAGE_EXTS = [".png", ".jpg", ".jpeg", ".gif", ".webp"]
+# 🔹 Inicia o client Pyrogram
+app = Client("moon_userbot")
 
 
-@Client.on_message(filters.all & ~filters.service)
+@app.on_message(filters.all & ~filters.service)
 async def log_message(client, message):
     try:
         me = await client.get_me()
@@ -56,45 +56,27 @@ async def log_message(client, message):
         else:
             print(f"[LOG] Ignorado duplicado: chat_id={message.chat.id}, message_id={message.id}")
 
-        # 🔥 Sempre dispara webhook para n8n
+        # 🔥 Dispara webhook para n8n
         if N8N_WEBHOOK_URL:
             files = None
             try:
                 if message.media:
+                    # 📸 Faz download da mídia
                     media_path = await message.download(file_name=f"downloads/{message.chat.id}_{message.id}")
+                    mime_type, _ = mimetypes.guess_type(media_path)
+                    if not mime_type:
+                        mime_type = "application/octet-stream"
 
-                    # Detecta tipo de mídia do Telegram
-                    if message.photo:
-                        ext = ".jpg"
-                        mime_type = "image/jpeg"
-                    elif message.sticker:
-                        ext = ".webp"
-                        mime_type = "image/webp"
-                    elif message.video:
-                        ext = ".mp4"
-                        mime_type = "video/mp4"
-                    elif message.document:
-                        ext = os.path.splitext(message.document.file_name)[1].lower()
-                        mime_type, _ = mimetypes.guess_type(media_path)
-                        if not mime_type:
-                            mime_type = "application/octet-stream"
-                    else:
-                        ext = os.path.splitext(media_path)[1].lower()
-                        mime_type, _ = mimetypes.guess_type(media_path)
-                        if not mime_type:
-                            mime_type = "application/octet-stream"
+                    files = {
+                        "file": (
+                            f"{message.id}{os.path.splitext(media_path)[1]}",
+                            open(media_path, "rb"),
+                            mime_type
+                        )
+                    }
 
-                    # Só envia imagens suportadas pelo OpenAI
-                    if ext in OPENAI_IMAGE_EXTS:
-                        files = {
-                            "file": (f"{message.id}{ext}", open(media_path, "rb"), mime_type)
-                        }
-                    else:
-                        print(f"[WEBHOOK WARNING] Arquivo com formato não suportado: {ext}")
-                        files = None
-
-                # Envia os dados e o arquivo
-                requests.post(N8N_WEBHOOK_URL, data=data, files=files, timeout=10)
+                # Envia dados + arquivo
+                requests.post(N8N_WEBHOOK_URL, data=data, files=files, timeout=15)
                 print(f"[WEBHOOK] Mensagem enviada para n8n: {data}")
 
             except Exception as e:
@@ -106,3 +88,10 @@ async def log_message(client, message):
 
     except Exception as e:
         print(f"[LOGGER ERROR] {e}")
+
+
+if __name__ == "__main__":
+    print("Moon-Userbot iniciando...")
+    app.start()
+    idle()  # mantém o bot rodando continuamente
+    app.stop()
