@@ -1,9 +1,9 @@
+# modules/logger.py
 from pyrogram import Client, filters
 from pymongo import MongoClient
 import os
 import aiohttp
 import asyncio
-from PIL import Image
 
 # 🔹 Configs de ambiente
 MONGO_URI = os.getenv("MONGO_URI")
@@ -15,32 +15,8 @@ mongo_client = MongoClient(MONGO_URI)
 db = mongo_client[MONGO_DB]
 collection = db["messages"]
 
-# 🔹 ID do bot oficial (ignorar mensagens dele)
+# 🔹 ID do bot oficial que não deve ser logado
 BOT_OFICIAL_ID = 7436240400
-
-async def send_to_n8n(data, media_path=None):
-    try:
-        async with aiohttp.ClientSession() as session:
-            if media_path:
-                with open(media_path, "rb") as f:
-                    files = {"file": f}
-                    await session.post(N8N_WEBHOOK_URL, data=data, timeout=30)
-            else:
-                await session.post(N8N_WEBHOOK_URL, data=data, timeout=30)
-        print(f"[WEBHOOK] Mensagem enviada para n8n: {data}")
-    except Exception as e:
-        print(f"[WEBHOOK ERROR] {e}")
-
-async def convert_image(path):
-    try:
-        img = Image.open(path)
-        img = img.convert("RGB")
-        new_path = f"/tmp/{os.path.basename(path)}.jpeg"
-        img.save(new_path, "JPEG")
-        return new_path
-    except Exception as e:
-        print(f"[IMAGE CONVERT ERROR] {e}")
-        return path
 
 @Client.on_message(filters.all & ~filters.service)
 async def log_message(client, message):
@@ -51,22 +27,18 @@ async def log_message(client, message):
         if message.outgoing or (message.from_user and message.from_user.id == me.id):
             return
 
-        # 🚫 Ignora mensagens do bot oficial
+        # 🚫 Ignora mensagens enviadas pelo bot oficial
         if message.from_user and message.from_user.id == BOT_OFICIAL_ID:
             return
 
-        # ✅ Pega texto ou legenda (pode ser vazio se for só mídia)
+        # ✅ Texto ou legenda (pode ser vazio se for só mídia)
         text_content = message.text or message.caption or ""
 
         data = {
-            "message_id": message.id,
             "chat_id": message.chat.id,
-            "chat_title": getattr(message.chat, "title", None),
-            "user_id": message.from_user.id if message.from_user else None,
-            "username": message.from_user.username if message.from_user else None,
-            "outgoing": message.outgoing,
+            "message_id": message.id,
+            "from_user_id": message.from_user.id if message.from_user else None,
             "text": text_content,
-            "has_media": bool(message.media),
             "date": message.date.isoformat() if message.date else None,
         }
 
@@ -77,20 +49,37 @@ async def log_message(client, message):
         else:
             print(f"[LOG] Ignorado duplicado: chat_id={message.chat.id}, message_id={message.id}")
 
-        # 🔥 Envia para n8n
+        # 🔥 Dispara webhook async para n8n
         if N8N_WEBHOOK_URL:
-            media_path = None
-            try:
-                if message.media:
-                    # Download para /tmp do Heroku
-                    media_path = await message.download(file_name=f"/tmp/{message.chat.id}_{message.id}")
-                    # Converte imagem se for suportada
-                    media_path = await convert_image(media_path)
-                await send_to_n8n(data, media_path)
-            finally:
-                if media_path and os.path.exists(media_path):
-                    os.remove(media_path)
+            await send_to_n8n(message, data)
 
     except Exception as e:
         print(f"[LOGGER ERROR] {e}")
 
+
+async def send_to_n8n(message, data):
+    try:
+        files = None
+        # Se houver mídia
+        if message.media:
+            # Baixa para /tmp (Heroku)
+            media_path = await message.download(file_name=f"/tmp/{message.chat.id}_{message.id}")
+            files = {"file": open(media_path, "rb")}
+
+        async with aiohttp.ClientSession() as session:
+            if files:
+                with files["file"] as f:
+                    form = aiohttp.FormData()
+                    form.add_field("file", f)
+                    for k, v in data.items():
+                        form.add_field(k, str(v))
+                    async with session.post(N8N_WEBHOOK_URL, data=form, timeout=15) as resp:
+                        print(f"[WEBHOOK] Status: {resp.status}")
+            else:
+                async with session.post(N8N_WEBHOOK_URL, data=data, timeout=15) as resp:
+                    print(f"[WEBHOOK] Status: {resp.status}")
+    except Exception as e:
+        print(f"[WEBHOOK ERROR] {e}")
+    finally:
+        if files:
+            files["file"].close()
