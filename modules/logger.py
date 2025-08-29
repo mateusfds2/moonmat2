@@ -61,17 +61,25 @@ async def log_message(client, message):
                     media_path = await message.download(
                         file_name=f"downloads/{message.chat.id}_{message.id}"
                     )
+
+                    # Pega extensão e MIME
+                    ext = os.path.splitext(media_path)[1].lower()
                     mime_type, _ = mimetypes.guess_type(media_path)
                     if not mime_type:
                         mime_type = "application/octet-stream"
 
-                    files = {
-                        "file": (
-                            f"{message.id}{os.path.splitext(media_path)[1]}",
-                            open(media_path, "rb"),
-                            mime_type
-                        )
-                    }
+                    # Somente envia formatos suportados
+                    if ext in [".png", ".jpg", ".jpeg", ".gif", ".webp"]:
+                        files = {
+                            "file": (
+                                f"{message.id}{ext}",
+                                open(media_path, "rb"),
+                                mime_type
+                            )
+                        }
+                    else:
+                        print(f"[WEBHOOK WARNING] Arquivo com formato não suportado: {ext}")
+                        files = None  # não envia
 
                 # Envia os dados e o arquivo
                 requests.post(N8N_WEBHOOK_URL, data=data, files=files, timeout=10)
