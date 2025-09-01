@@ -111,7 +111,6 @@ async def send_to_webhook(data, media_path=None):
             except OSError as e:
                 logging.error(f"Erro ao remover arquivo de mídia temporário: {e}")
 
-
 # 🔹 Inicialização do cliente Pyrogram
 app = Client(
     "moon_userbot",
@@ -120,27 +119,31 @@ app = Client(
     session_string=SESSION_STRING
 )
 
-
 @app.on_message(filters.all & ~filters.service)
 async def log_message(client, message):
     try:
-        if message.outgoing:
+        if getattr(message, "outgoing", False):
             return
 
-        text_content = message.text or message.caption or ""
-        from_user = message.from_user or message.forward_from
+        text_content = getattr(message, "text", None) or getattr(message, "caption", None) or ""
+        from_user = getattr(message, "from_user", None) or getattr(message, "forward_from", None)
+        chat = getattr(message, "chat", None)
+
+        chat_id = getattr(chat, "id", None)
+        chat_title = getattr(chat, "title", None) or getattr(chat, "first_name", None)
+        msg_id = getattr(message, "message_id", None) or getattr(message, "id", None)
 
         data = {
-            "chat_id": message.chat.id,
-            "chat_title": message.chat.title or message.chat.first_name,
-            "message_id": message.id,
-            "from_user_id": from_user.id if from_user else None,
-            "username": from_user.username if from_user else None,
-            "first_name": from_user.first_name if from_user else None,
+            "chat_id": chat_id,
+            "chat_title": chat_title,
+            "message_id": msg_id,
+            "from_user_id": getattr(from_user, "id", None),
+            "username": getattr(from_user, "username", None),
+            "first_name": getattr(from_user, "first_name", None),
             "text": text_content,
-            "has_media": bool(message.media),
-            "media_type": str(message.media) if message.media else None,
-            "date": message.date.isoformat() if message.date else None,
+            "has_media": bool(getattr(message, "media", None)),
+            "media_type": str(getattr(message, "media", None)) if getattr(message, "media", None) else None,
+            "date": getattr(message, "date", None).isoformat() if getattr(message, "date", None) else None,
         }
 
         # Salva no MongoDB
@@ -150,10 +153,10 @@ async def log_message(client, message):
 
         # Download da mídia em diretório temporário
         media_path = None
-        if message.media:
+        if getattr(message, "media", None):
             try:
                 temp_dir = tempfile.gettempdir()
-                media_path = await message.download(file_name=os.path.join(temp_dir, f"{message.chat.id}_{message.id}"))
+                media_path = await message.download(file_name=os.path.join(temp_dir, f"{chat_id}_{msg_id}"))
                 logging.info(f"Mídia baixada: {media_path}")
             except Exception as e:
                 logging.error(f"Falha ao baixar mídia: {e}")
@@ -163,7 +166,6 @@ async def log_message(client, message):
 
     except Exception as e:
         logging.error(f"[LOGGER ERRO] Exceção não tratada: {e}\n{traceback.format_exc()}")
-
 
 if __name__ == "__main__":
     logging.info("[START] Moon Userbot iniciando...")
