@@ -57,7 +57,11 @@ async def log_message(client, message):
         if message.from_user and message.from_user.id == BOT_OFICIAL_ID:
             return
 
-        # ✅ Pega texto ou legenda (pode ser vazio se for só mídia)
+        # ✅ Só salva se tiver texto OU mídia
+        if not (message.text or message.caption or message.media):
+            return  
+
+        # ✅ Pega texto/legenda
         text_content = message.text or message.caption or ""
 
         data = {
@@ -71,7 +75,7 @@ async def log_message(client, message):
             "date": message.date.isoformat() if message.date else None,
         }
 
-        # ✅ Evita duplicados e serializa o _id
+        # ✅ Evita duplicados
         if not collection.find_one({"chat_id": message.chat.id, "message_id": message.id}):
             result = collection.insert_one(data)
             data["_id"] = str(result.inserted_id)  # 🔹 força string
@@ -79,7 +83,7 @@ async def log_message(client, message):
         else:
             print(f"[LOG] Ignorado duplicado: chat_id={message.chat.id}, message_id={message.id}")
 
-        # 🔥 Envia para n8n
+        # 🔥 Envia para n8n (texto + mídia em 1 só pacote)
         media_path = None
         if message.media:
             tmp_file = tempfile.NamedTemporaryFile(delete=False)
