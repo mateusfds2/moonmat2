@@ -7,77 +7,55 @@ import tempfile
 import logging
 import traceback
 from pyrogram import filters
-from pymongo import MongoClient, errors
 
-# 🔹 Configuração de logs
-logging.basicConfig(
-    level=logging.INFO,
-    format="[%(levelname)s] %(asctime)s - %(message)s"
-)
+try:
+    from pymongo import MongoClient
+except ImportError:
+    MongoClient = None
 
-# 🔹 Variáveis de ambiente
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(asctime)s - %(message)s")
+
+# Configs de ambiente
 MONGO_URI = os.getenv("MONGO_URI")
 MONGO_DB_NAME = os.getenv("MONGO_DB", "telegram_logs")
 N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL")
 
-# 🔹 Conexão MongoDB
+# Conexão MongoDB
 mongo_client = None
 db = None
 collection = None
-
-if MONGO_URI:
+if MongoClient and MONGO_URI:
     try:
         mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
         mongo_client.admin.command('ping')
         db = mongo_client[MONGO_DB_NAME]
         collection = db["messages"]
         logging.info("[MONGODB] Conexão estabelecida com sucesso.")
-    except errors.ConnectionFailure as e:
-        logging.error(f"[MONGODB ERRO] Falha ao conectar: {e}")
-        mongo_client = db = collection = None
     except Exception as e:
-        logging.error(f"[MONGODB ERRO INESPERADO] {e}")
+        logging.error(f"[MONGODB ERRO] {e}")
         mongo_client = db = collection = None
 else:
-    logging.warning("[MONGODB] MONGO_URI não definida, mensagens não serão salvas.")
+    logging.warning("[MONGODB] Mongo não configurado, logs não serão salvos no banco.")
 
-# 🔹 Semáforo para limitar uploads simultâneos
 UPLOAD_SEMAPHORE = asyncio.Semaphore(5)
 
 async def send_to_webhook(data, media_path=None):
-    """Envia dados para n8n, incluindo mídia se houver"""
     if not N8N_WEBHOOK_URL:
         return
 
-    tmp_path = None
     try:
         async with UPLOAD_SEMAPHORE:
             async with aiohttp.ClientSession() as session:
                 form = aiohttp.FormData()
-                
-                # Adiciona metadados JSON
-                form.add_field(
-                    "json_data",
-                    json.dumps(data, ensure_ascii=False),
-                    content_type="application/json"
-                )
-
-                # Se existe mídia
+                form.add_field("json_data", json.dumps(data, ensure_ascii=False), content_type="application/json")
                 if media_path and os.path.exists(media_path):
                     with open(media_path, "rb") as f:
-                        form.add_field(
-                            "file",
-                            f,
-                            filename=os.path.basename(media_path),
-                            content_type="application/octet-stream"
-                        )
-
+                        form.add_field("file", f, filename=os.path.basename(media_path), content_type="application/octet-stream")
                 async with session.post(N8N_WEBHOOK_URL, data=form, timeout=aiohttp.ClientTimeout(total=60)) as resp:
                     if resp.status >= 400:
                         logging.error(f"[WEBHOOK] Erro {resp.status}: {await resp.text()}")
                     else:
                         logging.info(f"[WEBHOOK] Enviado com sucesso: {resp.status}")
-
     except Exception as e:
         logging.error(f"[WEBHOOK ERRO] {e}\n{traceback.format_exc()}")
     finally:
@@ -87,7 +65,8 @@ async def send_to_webhook(data, media_path=None):
             except OSError as e:
                 logging.error(f"Erro ao remover arquivo temporário: {e}")
 
-# 🔹 Handler principal
+
+# Registro do handler como módulo do Moon Userbot
 def register_logger(app):
     @app.on_message(filters.all)
     async def log_message(client, message):
@@ -120,7 +99,7 @@ def register_logger(app):
                 except Exception as e:
                     logging.error(f"[MONGODB ERRO] {e}")
 
-            # Baixa mídia em /tmp se houver
+            # Baixa mídia se houver
             media_path = None
             if message.media:
                 try:
