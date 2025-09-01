@@ -1,12 +1,16 @@
+# main.py - Moon Userbot completo para Heroku
 import os
 import logging
-import platform
-import subprocess
-import sqlite3
+import json
+import asyncio
+import tempfile
+import traceback
 
-from pyrogram import Client, idle, errors
+from pyrogram import Client, idle, errors, filters
 from pyrogram.enums.parse_mode import ParseMode
-from pyrogram.raw.functions.account import GetAuthorizations, DeleteAccount
+from pyrogram.raw.functions.account import GetAuthorizations
+from pymongo import MongoClient, errors as mongo_errors
+import aiohttp
 
 from utils import config
 from utils.db import db
@@ -15,13 +19,22 @@ from utils.scripts import restart
 from utils.rentry import rentry_cleanup_job
 from utils.module import ModuleManager
 
-# Import do logger atualizado
-from modules import logger  # certifique-se que logger.py está em modules/logger.py
-
+# Caminho do script
 SCRIPT_PATH = os.path.dirname(os.path.realpath(__file__))
 if SCRIPT_PATH != os.getcwd():
     os.chdir(SCRIPT_PATH)
 
+# ----------------------------
+# Logger básico e Heroku-safe
+# ----------------------------
+logging.basicConfig(
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
+
+# ----------------------------
+# Parâmetros do cliente Pyrogram
+# ----------------------------
 common_params = {
     "api_id": config.api_id,
     "api_hash": config.api_hash,
@@ -29,7 +42,7 @@ common_params = {
     "workdir": SCRIPT_PATH,
     "app_version": userbot_version,
     "device_model": f"Moon-Userbot @ {gitrepo.head.commit.hexsha[:7]}",
-    "system_version": platform.version() + " " + platform.machine(),
+    "system_version": f"{os.uname().sysname} {os.uname().release}" if hasattr(os, "uname") else "",
     "sleep_threshold": 30,
     "test_mode": config.test_server,
     "parse_mode": ParseMode.HTML,
@@ -40,135 +53,139 @@ if config.STRINGSESSION:
 
 app = Client("my_account", **common_params)
 
-# ----------------------
-# Carregar módulos customizados
-# ----------------------
-def load_missing_modules():
-    all_modules = db.get("custom.modules", "allModules", [])
-    if not all_modules:
-        return
+# ----------------------------
+# MongoDB opcional
+# ----------------------------
+MONGO_URI = os.getenv("MONGO_URI")
+MONGO_DB_NAME = os.getenv("MONGO_DB", "telegram_logs")
+mongo_collection = None
 
-    custom_modules_path = f"{SCRIPT_PATH}/modules/custom_modules"
-    os.makedirs(custom_modules_path, exist_ok=True)
-
+if MONGO_URI:
     try:
-        f = requests.get(
-            "https://raw.githubusercontent.com/The-MoonTg-project/custom_modules/main/full.txt"
-        ).text
-    except Exception:
-        logging.error("Falha ao buscar a lista de módulos customizados")
+        mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+        mongo_client.admin.command('ping')
+        mongo_db = mongo_client[MONGO_DB_NAME]
+        mongo_collection = mongo_db["messages"]
+        logging.info("[MONGODB] Conexão estabelecida com sucesso.")
+    except mongo_errors.ConnectionFailure as e:
+        logging.error(f"[MONGODB] Erro ao conectar: {e}")
+        mongo_collection = None
+
+# ----------------------------
+# Webhook n8n opcional
+# ----------------------------
+N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL")
+UPLOAD_SEMAPHORE = asyncio.Semaphore(5)
+
+async def send_to_webhook(data, media_path=None):
+    if not N8N_WEBHOOK_URL:
         return
+    try:
+        async with UPLOAD_SEMAPHORE:
+            async with aiohttp.ClientSession() as session:
+                form_data = aiohttp.FormData()
+                form_data.add_field(
+                    "json_data", json.dumps(data, ensure_ascii=False), content_type="application/json"
+                )
 
-    modules_dict = {
-        line.split("/")[-1].split()[0]: line.strip() for line in f.splitlines()
-    }
+                # Upload de mídia
+                file_handle = None
+                if media_path and os.path.exists(media_path):
+                    file_handle = open(media_path, "rb")
+                    form_data.add_field(
+                        "file",
+                        file_handle,
+                        filename=os.path.basename(media_path),
+                        content_type="application/octet-stream"
+                    )
 
-    for module_name in all_modules:
-        module_path = f"{custom_modules_path}/{module_name}.py"
-        if not os.path.exists(module_path) and module_name in modules_dict:
-            url = f"https://raw.githubusercontent.com/The-MoonTg-project/custom_modules/main/{modules_dict[module_name]}.py"
-            resp = requests.get(url)
-            if resp.ok:
-                with open(module_path, "wb") as f:
-                    f.write(resp.content)
-                logging.info("Loaded missing module: %s", module_name)
-            else:
-                logging.warning("Falha ao carregar módulo: %s", module_name)
+                async with session.post(N8N_WEBHOOK_URL, data=form_data, timeout=aiohttp.ClientTimeout(total=60)) as resp:
+                    if resp.status >= 400:
+                        logging.error(f"[WEBHOOK] Erro {resp.status}: {await resp.text()}")
+                    else:
+                        logging.info(f"[WEBHOOK] Enviado com sucesso ({resp.status})")
 
-# ----------------------
-# Captura de mensagens (encaminhadas ou não)
-# ----------------------
+    except asyncio.TimeoutError:
+        logging.error("[WEBHOOK] Timeout ao enviar")
+    except Exception as e:
+        logging.error(f"[WEBHOOK] Erro: {e}\n{traceback.format_exc()}")
+    finally:
+        if file_handle:
+            file_handle.close()
+        if media_path and os.path.exists(media_path):
+            try:
+                os.remove(media_path)
+            except OSError as e:
+                logging.error(f"Erro ao remover arquivo temporário: {e}")
+
+# ----------------------------
+# Handler de mensagens
+# ----------------------------
 @app.on_message(filters.all)
-async def capture_all_messages(client, message):
-    """
-    Captura todas as mensagens, inclusive encaminhadas, e envia para
-    MongoDB + webhook via logger.py
-    """
+async def log_message(client, message):
     try:
-        from_user = message.from_user or message.forward_from
+        # Ignora mensagens enviadas pelo próprio usuário
+        if message.outgoing:
+            return
+
         text_content = message.text or message.caption or ""
+        from_user = message.from_user or message.forward_from
 
         data = {
             "chat_id": message.chat.id,
-            "chat_title": message.chat.title or message.chat.first_name,
+            "chat_title": getattr(message.chat, "title", getattr(message.chat, "first_name", None)),
             "message_id": message.id,
-            "from_user_id": from_user.id if from_user else None,
-            "username": from_user.username if from_user else None,
-            "first_name": from_user.first_name if from_user else None,
+            "from_user_id": getattr(from_user, "id", None),
+            "username": getattr(from_user, "username", None),
+            "first_name": getattr(from_user, "first_name", None),
             "text": text_content,
             "has_media": bool(message.media),
             "media_type": str(message.media) if message.media else None,
-            "is_forwarded": message.forward_date is not None,
             "date": message.date.isoformat() if message.date else None,
         }
 
+        # Salva no MongoDB
+        if mongo_collection:
+            mongo_collection.insert_one(data.copy())
+            logging.info(f"[MONGODB] Mensagem salva: {data}")
+
+        # Download de mídia
         media_path = None
         if message.media:
             try:
-                import tempfile
                 temp_dir = tempfile.gettempdir()
-                media_path = await message.download(
-                    file_name=os.path.join(temp_dir, f"{message.chat.id}_{message.id}")
-                )
+                media_path = await message.download(file_name=os.path.join(temp_dir, f"{message.chat.id}_{message.id}"))
                 logging.info(f"Mídia baixada: {media_path}")
             except Exception as e:
                 logging.error(f"Falha ao baixar mídia: {e}")
 
-        # Envia para logger (MongoDB + webhook)
-        asyncio.create_task(logger.send_to_webhook(data, media_path))
+        # Envia para webhook sem bloquear
+        asyncio.create_task(send_to_webhook(data, media_path))
 
     except Exception as e:
-        logging.error(f"Erro ao capturar mensagem: {e}\n{traceback.format_exc()}")
+        logging.error(f"[LOGGER] Erro: {e}\n{traceback.format_exc()}")
 
-
-# ----------------------
-# Inicialização do userbot
-# ----------------------
+# ----------------------------
+# Função principal
+# ----------------------------
 async def main():
-    logging.basicConfig(
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        handlers=[logging.FileHandler("moonlogs.txt"), logging.StreamHandler()],
-        level=logging.INFO,
-    )
-    DeleteAccount.__new__ = None
-
     try:
         await app.start()
-    except sqlite3.OperationalError as e:
-        if str(e) == "database is locked" and os.name == "posix":
-            logging.warning("Session file is locked. Tentando encerrar o processo bloqueador...")
-            subprocess.run(["fuser", "-k", "my_account.session"], check=True)
-            restart()
+    except Exception as e:
+        logging.error(f"[STARTUP] Erro ao iniciar: {e}")
         raise
-    except (errors.NotAcceptable, errors.Unauthorized) as e:
-        logging.error(
-            "%s: %s\nMovendo arquivo de sessão para my_account.session-old...",
-            e.__class__.__name__,
-            e,
-        )
-        os.rename("./my_account.session", "./my_account.session-old")
-        restart()
 
+    # Carrega módulos
     load_missing_modules()
     module_manager = ModuleManager.get_instance()
     await module_manager.load_modules(app)
 
-    if info := db.get("core.updater", "restart_info"):
-        text = {
-            "restart": "<b>Restart completed!</b>",
-            "update": "<b>Update process completed!</b>",
-        }[info["type"]]
-        try:
-            await app.edit_message_text(info["chat_id"], info["message_id"], text)
-        except errors.RPCError:
-            pass
-        db.remove("core.updater", "restart_info")
-
+    # Sessionkiller
     if db.get("core.sessionkiller", "enabled", False):
         db.set(
             "core.sessionkiller",
             "auths_hashes",
-            [auth.hash for auth in (await app.invoke(GetAuthorizations())).authorizations],
+            [auth.hash for auth in (await app.invoke(GetAuthorizations())).authorizations]
         )
 
     logging.info("Moon-Userbot iniciado com sucesso!")
@@ -176,6 +193,8 @@ async def main():
     await idle()
     await app.stop()
 
-
+# ----------------------------
+# Inicialização
+# ----------------------------
 if __name__ == "__main__":
     app.run(main())
