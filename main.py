@@ -1,10 +1,10 @@
-# main.py - Moon Userbot completo para Heroku
 import os
 import logging
 import json
 import asyncio
 import tempfile
 import traceback
+import requests
 
 from pyrogram import Client, idle, errors, filters
 from pyrogram.enums.parse_mode import ParseMode
@@ -19,18 +19,49 @@ from utils.scripts import restart
 from utils.rentry import rentry_cleanup_job
 from utils.module import ModuleManager
 
-# Caminho do script
 SCRIPT_PATH = os.path.dirname(os.path.realpath(__file__))
 if SCRIPT_PATH != os.getcwd():
     os.chdir(SCRIPT_PATH)
 
-# ----------------------------
-# Logger básico e Heroku-safe
-# ----------------------------
+# Logger básico
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
+
+# ----------------------------
+# Função para carregar módulos faltantes
+# ----------------------------
+def load_missing_modules():
+    all_modules = db.get("custom.modules", "allModules", [])
+    if not all_modules:
+        return
+
+    custom_modules_path = f"{SCRIPT_PATH}/modules/custom_modules"
+    os.makedirs(custom_modules_path, exist_ok=True)
+
+    try:
+        f = requests.get(
+            "https://raw.githubusercontent.com/The-MoonTg-project/custom_modules/main/full.txt"
+        ).text
+    except Exception:
+        logging.error("Failed to fetch custom modules list")
+        return
+    modules_dict = {
+        line.split("/")[-1].split()[0]: line.strip() for line in f.splitlines()
+    }
+
+    for module_name in all_modules:
+        module_path = f"{custom_modules_path}/{module_name}.py"
+        if not os.path.exists(module_path) and module_name in modules_dict:
+            url = f"https://raw.githubusercontent.com/The-MoonTg-project/custom_modules/main/{modules_dict[module_name]}.py"
+            resp = requests.get(url)
+            if resp.ok:
+                with open(module_path, "wb") as f:
+                    f.write(resp.content)
+                logging.info("Loaded missing module: %s", module_name)
+            else:
+                logging.warning("Failed to load module: %s", module_name)
 
 # ----------------------------
 # Parâmetros do cliente Pyrogram
@@ -54,7 +85,7 @@ if config.STRINGSESSION:
 app = Client("my_account", **common_params)
 
 # ----------------------------
-# MongoDB opcional
+# MongoDB
 # ----------------------------
 MONGO_URI = os.getenv("MONGO_URI")
 MONGO_DB_NAME = os.getenv("MONGO_DB", "telegram_logs")
@@ -72,7 +103,7 @@ if MONGO_URI:
         mongo_collection = None
 
 # ----------------------------
-# Webhook n8n opcional
+# Webhook
 # ----------------------------
 N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL")
 UPLOAD_SEMAPHORE = asyncio.Semaphore(5)
@@ -84,11 +115,8 @@ async def send_to_webhook(data, media_path=None):
         async with UPLOAD_SEMAPHORE:
             async with aiohttp.ClientSession() as session:
                 form_data = aiohttp.FormData()
-                form_data.add_field(
-                    "json_data", json.dumps(data, ensure_ascii=False), content_type="application/json"
-                )
+                form_data.add_field("json_data", json.dumps(data, ensure_ascii=False), content_type="application/json")
 
-                # Upload de mídia
                 file_handle = None
                 if media_path and os.path.exists(media_path):
                     file_handle = open(media_path, "rb")
@@ -104,9 +132,6 @@ async def send_to_webhook(data, media_path=None):
                         logging.error(f"[WEBHOOK] Erro {resp.status}: {await resp.text()}")
                     else:
                         logging.info(f"[WEBHOOK] Enviado com sucesso ({resp.status})")
-
-    except asyncio.TimeoutError:
-        logging.error("[WEBHOOK] Timeout ao enviar")
     except Exception as e:
         logging.error(f"[WEBHOOK] Erro: {e}\n{traceback.format_exc()}")
     finally:
@@ -124,7 +149,6 @@ async def send_to_webhook(data, media_path=None):
 @app.on_message(filters.all)
 async def log_message(client, message):
     try:
-        # Ignora mensagens enviadas pelo próprio usuário
         if message.outgoing:
             return
 
@@ -144,57 +168,11 @@ async def log_message(client, message):
             "date": message.date.isoformat() if message.date else None,
         }
 
-        # Salva no MongoDB
         if mongo_collection:
             mongo_collection.insert_one(data.copy())
             logging.info(f"[MONGODB] Mensagem salva: {data}")
 
-        # Download de mídia
         media_path = None
         if message.media:
-            try:
-                temp_dir = tempfile.gettempdir()
-                media_path = await message.download(file_name=os.path.join(temp_dir, f"{message.chat.id}_{message.id}"))
-                logging.info(f"Mídia baixada: {media_path}")
-            except Exception as e:
-                logging.error(f"Falha ao baixar mídia: {e}")
-
-        # Envia para webhook sem bloquear
-        asyncio.create_task(send_to_webhook(data, media_path))
-
-    except Exception as e:
-        logging.error(f"[LOGGER] Erro: {e}\n{traceback.format_exc()}")
-
-# ----------------------------
-# Função principal
-# ----------------------------
-async def main():
-    try:
-        await app.start()
-    except Exception as e:
-        logging.error(f"[STARTUP] Erro ao iniciar: {e}")
-        raise
-
-    # Carrega módulos
-    load_missing_modules()
-    module_manager = ModuleManager.get_instance()
-    await module_manager.load_modules(app)
-
-    # Sessionkiller
-    if db.get("core.sessionkiller", "enabled", False):
-        db.set(
-            "core.sessionkiller",
-            "auths_hashes",
-            [auth.hash for auth in (await app.invoke(GetAuthorizations())).authorizations]
-        )
-
-    logging.info("Moon-Userbot iniciado com sucesso!")
-    app.loop.create_task(rentry_cleanup_job())
-    await idle()
-    await app.stop()
-
-# ----------------------------
-# Inicialização
-# ----------------------------
-if __name__ == "__main__":
-    app.run(main())
+            temp_dir = tempfile.gettempdir()
+            media_path = await message.download(file_name=os.path.join(temp_dir, f"{message.cha_
