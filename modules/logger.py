@@ -23,12 +23,27 @@ API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 SESSION_STRING = os.getenv("SESSION_STRING")
 
-# Validação de variáveis essenciais
-if not all([API_ID, API_HASH, SESSION_STRING]):
-    logging.error("[ERRO CRÍTICO] Variáveis de ambiente API_ID, API_HASH e SESSION_STRING são obrigatórias!")
+# [MELHORIA] Validação de variáveis essenciais mais específica
+missing_vars = []
+if not API_ID:
+    missing_vars.append("API_ID")
+if not API_HASH:
+    missing_vars.append("API_HASH")
+if not SESSION_STRING:
+    missing_vars.append("SESSION_STRING")
+
+if missing_vars:
+    # Este log agora vai dizer exatamente qual variável está faltando
+    logging.error(f"[ERRO CRÍTICO] As seguintes variáveis de ambiente são obrigatórias, mas não foram encontradas: {', '.join(missing_vars)}")
     exit(1)
 
-API_ID = int(API_ID)
+# Validação para garantir que o API_ID é um número antes de converter
+try:
+    API_ID = int(API_ID)
+except (ValueError, TypeError):
+    logging.error(f"[ERRO CRÍTICO] A variável de ambiente API_ID ('{API_ID}') não é um número inteiro válido.")
+    exit(1)
+
 
 # 🔹 Conexão com o MongoDB com tratamento de erros
 mongo_client = None
@@ -168,5 +183,6 @@ if __name__ == "__main__":
     logging.info("[START] Moon Userbot iniciando...")
     app.run()
     logging.info("[STOP] Moon Userbot finalizado.")
+
 
 
