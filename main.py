@@ -1,47 +1,6 @@
-#  Moon-Userbot - telegram userbot
-#  Copyright (C) 2020-present Moon Userbot Organization
-#
-#  This program is free software: you can redistribute it and/or modify
-#  it under the terms of the GNU General Public License as published by
-#  the Free Software Foundation, either version 3 of the License, or
-#  (at your option) any later version.
-
-#  This program is distributed in the hope that it will be useful,
-#  but WITHOUT ANY WARRANTY; without even the implied warranty of
-#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#  GNU General Public License for more details.
-
-#  You should have received a copy of the GNU General Public License
-#  along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
-# /// script
-# requires-python = ">=3.11"
-# dependencies = [
-#     "pip",
-#     "pyrofork",
-#     "tgcrypto",
-#     "wheel",
-#     "gunicorn",
-#     "flask",
-#     "humanize",
-#     "pygments",
-#     "pymongo",
-#     "psutil",
-#     "Pillow>=10.3.0",
-#     "click",
-#     "dnspython",
-#     "requests",
-#     "environs",
-#     "GitPython",
-#     "beautifulsoup4",
-#     "aiohttp",
-#     "aiofiles",
-#     "pySmartDL",
-# ]
-# ///
+# main.py
 import os
 import logging
-
 import sqlite3
 import platform
 import subprocess
@@ -57,6 +16,9 @@ from utils.misc import gitrepo, userbot_version
 from utils.scripts import restart
 from utils.rentry import rentry_cleanup_job
 from utils.module import ModuleManager
+
+# IMPORTAR LOGGER PERSONALIZADO
+from modules import logger as logger_module
 
 SCRIPT_PATH = os.path.dirname(os.path.realpath(__file__))
 if SCRIPT_PATH != os.getcwd():
@@ -80,6 +42,9 @@ if config.STRINGSESSION:
 
 app = Client("my_account", **common_params)
 
+# REGISTRA O LOGGER PARA CAPTURAR TODAS AS MENSAGENS
+logger_module.register_logger(app)
+
 
 def load_missing_modules():
     all_modules = db.get("custom.modules", "allModules", [])
@@ -96,9 +61,8 @@ def load_missing_modules():
     except Exception:
         logging.error("Failed to fetch custom modules list")
         return
-    modules_dict = {
-        line.split("/")[-1].split()[0]: line.strip() for line in f.splitlines()
-    }
+
+    modules_dict = {line.split("/")[-1].split()[0]: line.strip() for line in f.splitlines()}
 
     for module_name in all_modules:
         module_path = f"{custom_modules_path}/{module_name}.py"
@@ -125,9 +89,7 @@ async def main():
         await app.start()
     except sqlite3.OperationalError as e:
         if str(e) == "database is locked" and os.name == "posix":
-            logging.warning(
-                "Session file is locked. Trying to kill blocking process..."
-            )
+            logging.warning("Session file is locked. Trying to kill blocking process...")
             subprocess.run(["fuser", "-k", "my_account.session"], check=True)
             restart()
         raise
@@ -155,7 +117,6 @@ async def main():
             pass
         db.remove("core.updater", "restart_info")
 
-    # required for sessionkiller module
     if db.get("core.sessionkiller", "enabled", False):
         db.set(
             "core.sessionkiller",
@@ -171,7 +132,6 @@ async def main():
     app.loop.create_task(rentry_cleanup_job())
 
     await idle()
-
     await app.stop()
 
 
