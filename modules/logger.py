@@ -4,7 +4,6 @@ import os
 import aiohttp
 import asyncio
 import tempfile
-import json
 
 # 🔹 Configs de ambiente
 MONGO_URI = os.getenv("MONGO_URI")
@@ -22,7 +21,6 @@ BOT_OFICIAL_ID = 7436240400
 # 🔹 Limite de uploads simultâneos
 UPLOAD_SEMAPHORE = asyncio.Semaphore(3)
 
-
 async def send_webhook(data, media_path=None):
     """Envia dados e arquivo para n8n usando aiohttp"""
     if not N8N_WEBHOOK_URL:
@@ -30,35 +28,21 @@ async def send_webhook(data, media_path=None):
     try:
         async with UPLOAD_SEMAPHORE:
             async with aiohttp.ClientSession() as session:
-                form = aiohttp.FormData()
-
-                # ✅ Se tiver arquivo, manda como binário
                 if media_path:
-                    with open(media_path, "rb") as f:
-                        form.add_field(
-                            "file",
-                            f,
-                            filename=os.path.basename(media_path),
-                            content_type="application/octet-stream"
-                        )
-
-                # ✅ Payload JSON em campo único
-                form.add_field(
-                    "payload_json",
-                    json.dumps(data, ensure_ascii=False),
-                    content_type="application/json"
-                )
-
-                # ✅ Aqui estava o problema: bloco sem indentação
-                async with session.post(N8N_WEBHOOK_URL, data=form, timeout=60) as resp:
-                    print(f"[WEBHOOK] Status: {resp.status}")
-
+                    form = aiohttp.FormData()
+                    form.add_field("file", open(media_path, "rb"), filename=os.path.basename(media_path))
+                    for k, v in data.items():
+                        form.add_field(k, str(v))
+                    async with session.post(N8N_WEBHOOK_URL, data=form, timeout=60) as resp:
+                        print(f"[WEBHOOK] Status: {resp.status}")
+                else:
+                    async with session.post(N8N_WEBHOOK_URL, json=data, timeout=60) as resp:
+                        print(f"[WEBHOOK] Status: {resp.status}")
     except Exception as e:
         print(f"[WEBHOOK ERROR] {e}")
     finally:
         if media_path and os.path.exists(media_path):
-            os.remove(media_path)  # remove arquivo temporário
-
+            os.remove(media_path)  # Remove arquivo temporário
 
 @Client.on_message(filters.all & ~filters.service)
 async def log_message(client, message):
@@ -81,15 +65,16 @@ async def log_message(client, message):
             "chat_title": getattr(message.chat, "title", None),
             "message_id": message.id,
             "from_user_id": message.from_user.id if message.from_user else None,
-            "username": getattr(message.from_user, "username", None),
+            "username": message.from_user.username if message.from_user else None,
             "text": text_content,
             "has_media": bool(message.media),
             "date": message.date.isoformat() if message.date else None,
         }
 
-        # ✅ Evita duplicados no Mongo
+        # ✅ Evita duplicados e serializa o _id
         if not collection.find_one({"chat_id": message.chat.id, "message_id": message.id}):
-            collection.insert_one(data)
+            result = collection.insert_one(data)
+            data["_id"] = str(result.inserted_id)  # 🔹 força string
             print(f"[LOG] Mensagem salva no MongoDB: {data}")
         else:
             print(f"[LOG] Ignorado duplicado: chat_id={message.chat.id}, message_id={message.id}")
