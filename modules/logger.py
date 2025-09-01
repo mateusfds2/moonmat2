@@ -140,7 +140,7 @@ async def log_message(client, message):
         }
 
         # Salva no MongoDB, se configurado
-        if collection:
+        if collection is not None:
             collection.insert_one(data.copy()) # Usa .copy() para evitar alterações no dict original
             logging.info(f"[MONGODB] Mensagem do chat '{data['chat_title']}' salva.")
 
@@ -168,3 +168,5 @@ if __name__ == "__main__":
     logging.info("[START] Moon Userbot iniciando...")
     app.run()
     logging.info("[STOP] Moon Userbot finalizado.")
+
+
