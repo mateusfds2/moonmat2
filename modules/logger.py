@@ -25,7 +25,15 @@ SESSION_STRING = os.getenv("SESSION_STRING")  # já configurado no Heroku
 # 🔹 MongoDB
 mongo_client = MongoClient(MONGO_URI) if MONGO_URI else None
 db = mongo_client[MONGO_DB] if mongo_client else None
-collection = db["messages"] if db is not None else None  # ✅ Corrigido
+collection = db["messages"] if db is not None else None
+
+# Teste rápido de conexão MongoDB
+if collection:
+    try:
+        mongo_client.server_info()
+        logging.info("[MongoDB] Conectado com sucesso!")
+    except Exception as e:
+        logging.error(f"[MongoDB] Falha ao conectar: {e}")
 
 # 🔹 Limite de uploads simultâneos
 UPLOAD_SEMAPHORE = asyncio.Semaphore(3)
@@ -42,7 +50,7 @@ async def send_webhook(data, media_path=None):
             async with aiohttp.ClientSession() as session:
                 form = aiohttp.FormData()
 
-                # Arquivo de mídia ou texto temporário
+                # Se tem mídia, envia o arquivo real
                 if media_path and os.path.exists(media_path):
                     with open(media_path, "rb") as f:
                         form.add_field(
@@ -52,6 +60,7 @@ async def send_webhook(data, media_path=None):
                             content_type="application/octet-stream"
                         )
                 else:
+                    # Se não tem mídia, gera um arquivo .txt com o texto
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".txt") as tmp_txt:
                         tmp_txt_path = tmp_txt.name
                         tmp_txt.write(data.get("text", "").encode("utf-8"))
@@ -64,7 +73,7 @@ async def send_webhook(data, media_path=None):
                             content_type="text/plain"
                         )
 
-                # Campos adicionais
+                # Adiciona metadados
                 for k, v in data.items():
                     form.add_field(k, str(v))
 
@@ -74,6 +83,7 @@ async def send_webhook(data, media_path=None):
     except Exception as e:
         logging.error(f"[WEBHOOK ERROR] {e}")
     finally:
+        # Limpa arquivos temporários
         if media_path and os.path.exists(media_path):
             os.remove(media_path)
         if tmp_txt_path and os.path.exists(tmp_txt_path):
@@ -94,10 +104,11 @@ async def log_message(client, message):
     try:
         me = await client.get_me()
 
-        # Ignora mensagens enviadas pelo bot
+        # Ignora mensagens enviadas pelo próprio userbot
         if message.outgoing or (message.from_user and message.from_user.id == me.id):
             return
 
+        # Texto ou legenda (pode ser vazio)
         text_content = message.text or message.caption or ""
 
         data = {
@@ -111,7 +122,7 @@ async def log_message(client, message):
             "date": message.date.isoformat() if message.date else None,
         }
 
-        # Salva no MongoDB
+        # Evita duplicados no Mongo
         if collection:
             if not collection.find_one({"chat_id": message.chat.id, "message_id": message.id}):
                 result = collection.insert_one(data)
@@ -120,12 +131,12 @@ async def log_message(client, message):
             else:
                 logging.info(f"[LOG] Ignorado duplicado: chat_id={message.chat.id}, message_id={message.id}")
 
-        # Download da mídia
+        # Baixa mídia se existir
         media_path = None
         if message.media:
             media_path = await message.download(file_name=f"/tmp/{message.chat.id}_{message.id}")
 
-        # Envia para o webhook sem bloquear
+        # Dispara webhook em task separada
         asyncio.create_task(send_webhook(data, media_path))
 
     except Exception as e:
