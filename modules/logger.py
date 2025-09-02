@@ -14,18 +14,13 @@ collection = db["messages"]
 BOT_OFICIAL_ID = 7436240400
 
 # 🔹 Grupo de destino (onde o userbot encaminhará as mensagens)
-FORWARD_CHAT_ID = int(os.getenv("FORWARD_CHAT_ID", "-1001234567890"))  # coloque o ID do grupo destino
+FORWARD_CHAT_ID = int(os.getenv("FORWARD_CHAT_ID", "-1002993843722"))  # coloque o ID do grupo destino
 
 @Client.on_message(filters.all & ~filters.service)
 async def log_and_forward(client, message):
     try:
-        me = await client.get_me()
-
-        # 🚫 Ignora mensagens enviadas pelo próprio userbot
-        if message.outgoing or (message.from_user and message.from_user.id == me.id):
-            return
-
-        # 🚫 Ignora mensagens enviadas pelo bot oficial
+        # ❌ Antes ignorava mensagens suas, agora mantém todas
+        # ✅ Ainda ignora apenas as mensagens do BOT_OFICIAL
         if message.from_user and message.from_user.id == BOT_OFICIAL_ID:
             return
 
@@ -38,6 +33,7 @@ async def log_and_forward(client, message):
             "message_id": message.id,
             "from_user_id": getattr(message.from_user, "id", None) if message.from_user else None,
             "username": getattr(message.from_user, "username", None) if message.from_user else None,
+            "outgoing": message.outgoing,  # 🔹 Mantém info se foi vc que enviou
             "text": text_content,
             "has_media": bool(message.media),
             "date": message.date.isoformat() if message.date else None,
