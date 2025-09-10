@@ -1,6 +1,7 @@
 from pyrogram import Client, filters
 from pymongo import MongoClient
 import os
+import re
 
 # 🔹 Configs de ambiente
 MONGO_URI = os.getenv("MONGO_URI")
@@ -14,18 +15,28 @@ collection = db["messages"]
 BOT_OFICIAL_ID = 7436240400
 
 # 🔹 Grupo de destino (onde o userbot encaminhará as mensagens)
-FORWARD_CHAT_ID = int(os.getenv("FORWARD_CHAT_ID", "-1002993843722"))  # coloque o ID do grupo destino
+FORWARD_CHAT_ID = int(os.getenv("FORWARD_CHAT_ID", "-1002993843722"))
+
+# 🔹 Regex para detectar URLs
+URL_REGEX = re.compile(r'https?://\S+|www\.\S+')
 
 @Client.on_message(filters.all & ~filters.service)
 async def log_and_forward(client, message):
     try:
-        # ❌ Antes ignorava mensagens suas, agora mantém todas
-        # ✅ Ainda ignora apenas as mensagens do BOT_OFICIAL
+        # ❌ Ignora mensagens do BOT_OFICIAL
         if message.from_user and message.from_user.id == BOT_OFICIAL_ID:
             return
 
-        # ✅ Pega texto ou legenda (pode ser vazio se for só mídia)
+        # ✅ Pega texto ou legenda
         text_content = message.text or message.caption or ""
+
+        # 🔎 Verifica se contém URL
+        has_url = bool(URL_REGEX.search(text_content))
+
+        # 🚫 Bloqueia tudo que não for texto, foto ou URL
+        if not (message.text or message.photo or has_url):
+            print(f"[IGNORADO] Mensagem {message.id} não é texto, imagem ou URL.")
+            return
 
         data = {
             "chat_id": message.chat.id,
@@ -33,9 +44,9 @@ async def log_and_forward(client, message):
             "message_id": message.id,
             "from_user_id": getattr(message.from_user, "id", None) if message.from_user else None,
             "username": getattr(message.from_user, "username", None) if message.from_user else None,
-            "outgoing": message.outgoing,  # 🔹 Mantém info se foi vc que enviou
+            "outgoing": message.outgoing,
             "text": text_content,
-            "has_media": bool(message.media),
+            "has_media": bool(message.photo),  # só marca mídia se for imagem
             "date": message.date.isoformat() if message.date else None,
         }
 
@@ -46,7 +57,7 @@ async def log_and_forward(client, message):
         else:
             print(f"[LOG] Ignorado duplicado: chat_id={message.chat.id}, message_id={message.id}")
 
-        # 🔥 Encaminha todas as mensagens para o grupo de destino
+        # 🔥 Encaminha para o grupo de destino
         try:
             await message.forward(FORWARD_CHAT_ID)
             print(f"[FORWARD] Mensagem {message.id} encaminhada para {FORWARD_CHAT_ID}")
