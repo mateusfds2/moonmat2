@@ -16,7 +16,7 @@ BOT_OFICIAL_ID = 7436240400
 
 # 🔹 Grupos de destino
 FORWARD_CHAT_ID_1 = int(os.getenv("FORWARD_CHAT_ID", "-1002993843722"))
-FORWARD_CHAT_ID_2 = -4902774074  # segundo grupo
+FORWARD_CHAT_ID_2 = -1004902774074  # segundo grupo
 
 # 🔹 Regex para detectar URLs
 URL_REGEX = re.compile(r'https?://\S+|www\.\S+')
