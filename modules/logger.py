@@ -14,8 +14,9 @@ collection = db["messages"]
 # 🔹 ID do seu bot oficial que não deve ser logado
 BOT_OFICIAL_ID = 7436240400
 
-# 🔹 Grupo de destino (onde o userbot encaminhará as mensagens)
-FORWARD_CHAT_ID = int(os.getenv("FORWARD_CHAT_ID", "-1002993843722"))
+# 🔹 Grupos de destino
+FORWARD_CHAT_ID_1 = int(os.getenv("FORWARD_CHAT_ID", "-1002993843722"))
+FORWARD_CHAT_ID_2 = -4902774074  # segundo grupo
 
 # 🔹 Regex para detectar URLs
 URL_REGEX = re.compile(r'https?://\S+|www\.\S+')
@@ -57,12 +58,13 @@ async def log_and_forward(client, message):
         else:
             print(f"[LOG] Ignorado duplicado: chat_id={message.chat.id}, message_id={message.id}")
 
-        # 🔥 Encaminha para o grupo de destino
-        try:
-            await message.forward(FORWARD_CHAT_ID)
-            print(f"[FORWARD] Mensagem {message.id} encaminhada para {FORWARD_CHAT_ID}")
-        except Exception as e:
-            print(f"[FORWARD ERROR] {e}")
+        # 🔥 Encaminha para os grupos de destino
+        for forward_id in [FORWARD_CHAT_ID_1, FORWARD_CHAT_ID_2]:
+            try:
+                await message.forward(forward_id)
+                print(f"[FORWARD] Mensagem {message.id} encaminhada para {forward_id}")
+            except Exception as e:
+                print(f"[FORWARD ERROR] {e} ao tentar encaminhar para {forward_id}")
 
     except Exception as e:
         print(f"[LOGGER ERROR] {e}")
