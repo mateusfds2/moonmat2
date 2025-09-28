@@ -1,14 +1,6 @@
 from pyrogram import Client, filters
-from pymongo import MongoClient
 import os
 import re
-
-# 🔹 Configs de ambiente
-MONGO_URI = os.getenv("MONGO_URI")
-MONGO_DB = os.getenv("MONGO_DB", "telegram_logs")
-mongo_client = MongoClient(MONGO_URI)
-db = mongo_client[MONGO_DB]
-collection = db["messages"]
 
 # 🔹 ID do seu bot oficial que não deve ser logado
 BOT_OFICIAL_ID = 7436240400
@@ -34,24 +26,28 @@ def format_file_size(size_bytes):
 
 def get_file_size(message):
     """Retorna o tamanho do arquivo em bytes, se existir"""
-    if message.photo:
-        # Para fotos, pega a maior resolução
-        return max(photo.file_size for photo in message.photo.thumbs + [message.photo])
-    elif message.document:
-        return message.document.file_size
-    elif message.video:
-        return message.video.file_size
-    elif message.audio:
-        return message.audio.file_size
-    elif message.voice:
-        return message.voice.file_size
-    elif message.video_note:
-        return message.video_note.file_size
-    elif message.sticker:
-        return message.sticker.file_size
-    elif message.animation:
-        return message.animation.file_size
-    return 0
+    try:
+        if message.photo:
+            # Para fotos, usar apenas o file_size da photo principal
+            return getattr(message.photo, 'file_size', 0)
+        elif message.document:
+            return getattr(message.document, 'file_size', 0)
+        elif message.video:
+            return getattr(message.video, 'file_size', 0)
+        elif message.audio:
+            return getattr(message.audio, 'file_size', 0)
+        elif message.voice:
+            return getattr(message.voice, 'file_size', 0)
+        elif message.video_note:
+            return getattr(message.video_note, 'file_size', 0)
+        elif message.sticker:
+            return getattr(message.sticker, 'file_size', 0)
+        elif message.animation:
+            return getattr(message.animation, 'file_size', 0)
+        return 0
+    except Exception as e:
+        print(f"[ERROR] Erro ao obter tamanho do arquivo: {e}")
+        return 0
 
 @Client.on_message(filters.all & ~filters.service)
 async def log_and_forward(client, message):
@@ -60,13 +56,13 @@ async def log_and_forward(client, message):
         if message.from_user and message.from_user.id == BOT_OFICIAL_ID:
             return
 
-        # ✅ Pega texto ou legenda
+        # ✅ Pega texto ou legenda com proteção contra None
         text_content = message.text or message.caption or ""
         
         # 🔎 Verifica se contém URL
-        has_url = bool(URL_REGEX.search(text_content))
+        has_url = bool(URL_REGEX.search(text_content)) if text_content else False
         
-        # 📁 Verifica tamanho do arquivo
+        # 📁 Verifica tamanho do arquivo (com tratamento de erro)
         file_size = get_file_size(message)
         
         # 🚫 Verifica se o arquivo excede o tamanho máximo
@@ -74,41 +70,30 @@ async def log_and_forward(client, message):
             print(f"[BLOQUEADO] Arquivo muito grande ({format_file_size(file_size)}) - máximo permitido: {format_file_size(MAX_FILE_SIZE)}")
             return
         
-        # 🚫 Bloqueia tudo que não for texto, foto ou URL
-        if not (message.text or message.photo or has_url):
+        # 🚫 Bloqueia tudo que não for texto, foto ou URL (filtro restritivo)
+        has_acceptable_content = (
+            message.text or          # Mensagens de texto
+            message.photo or         # Imagens/fotos
+            has_url                  # Qualquer conteúdo com URL (texto ou legenda)
+        )
+        
+        if not has_acceptable_content:
             print(f"[IGNORADO] Mensagem {message.id} não é texto, imagem ou URL.")
             return
 
-        # 📊 Prepara dados para o MongoDB
-        data = {
-            "chat_id": message.chat.id,
-            "chat_title": getattr(message.chat, "title", None),
-            "message_id": message.id,
-            "from_user_id": getattr(message.from_user, "id", None) if message.from_user else None,
-            "username": getattr(message.from_user, "username", None) if message.from_user else None,
-            "outgoing": message.outgoing,
-            "text": text_content,
-            "has_media": bool(message.photo),  # só marca mídia se for imagem
-            "file_size": file_size if file_size > 0 else None,  # adiciona tamanho do arquivo
-            "date": message.date.isoformat() if message.date else None,
-        }
-
-        # ✅ Evita duplicados
-        if not collection.find_one({"chat_id": message.chat.id, "message_id": message.id}):
-            collection.insert_one(data)
-            size_info = f" ({format_file_size(file_size)})" if file_size > 0 else ""
-            print(f"[LOG] Mensagem salva no MongoDB{size_info}: {data}")
-        else:
-            print(f"[LOG] Ignorado duplicado: chat_id={message.chat.id}, message_id={message.id}")
+        # 📋 Log da mensagem processada
+        size_info = f" ({format_file_size(file_size)})" if file_size > 0 else ""
+        print(f"[PROCESSANDO] Mensagem {message.id}{size_info} - Conteúdo: {text_content[:50]}...")
 
         # 🔥 Encaminha para os grupos de destino
         for forward_id in [FORWARD_CHAT_ID_1, FORWARD_CHAT_ID_2]:
             try:
                 await message.forward(forward_id)
-                size_info = f" ({format_file_size(file_size)})" if file_size > 0 else ""
                 print(f"[FORWARD] Mensagem {message.id}{size_info} encaminhada para {forward_id}")
             except Exception as e:
                 print(f"[FORWARD ERROR] {e} ao tentar encaminhar para {forward_id}")
 
     except Exception as e:
-        print(f"[LOGGER ERROR] {e}")
+        print(f"[LOGGER ERROR] Erro geral na função: {e}")
+        # Log adicional para debug
+        print(f"[DEBUG] Message ID: {getattr(message, 'id', 'unknown')}, Chat: {getattr(message.chat, 'id', 'unknown') if hasattr(message, 'chat') else 'unknown'}")
