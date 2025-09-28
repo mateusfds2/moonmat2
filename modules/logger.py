@@ -5,6 +5,9 @@ import re
 # 🔹 ID do seu bot oficial que não deve ser logado
 BOT_OFICIAL_ID = 7436240400
 
+# 🔹 Grupo que deve ser ignorado (não encaminhar mensagens)
+BLOCKED_CHAT_ID = -1003047757269
+
 # 🔹 Grupos de destino
 FORWARD_CHAT_ID_1 = int(os.getenv("FORWARD_CHAT_ID", "-1002993843722"))
 FORWARD_CHAT_ID_2 = -1003012964574  # segundo grupo
@@ -54,6 +57,11 @@ async def log_and_forward(client, message):
     try:
         # ❌ Ignora mensagens do BOT_OFICIAL
         if message.from_user and message.from_user.id == BOT_OFICIAL_ID:
+            return
+
+        # ❌ Ignora mensagens do grupo bloqueado
+        if message.chat.id == BLOCKED_CHAT_ID:
+            print(f"[BLOQUEADO] Mensagem do grupo ignorado: {BLOCKED_CHAT_ID}")
             return
 
         # ✅ Pega texto ou legenda com proteção contra None
