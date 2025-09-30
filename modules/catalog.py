@@ -11,7 +11,7 @@ import json
 from datetime import datetime
 
 # ID do grupo padrão (pode ser alterado via comando)
-DEFAULT_GROUP_ID = -1002993843722
+DEFAULT_GROUP_ID = -1003042756853
 
 
 @Client.on_message(filters.command("catalog", prefix) & filters.me)
@@ -308,7 +308,7 @@ async def list_catalogs(client: Client, message: Message):
 
 
 modules_help["catalog"] = {
-    "catalog [group_id]": "Cataloga todos os User IDs do grupo (padrão: -1002993843722)",
+    "catalog [group_id]": "Cataloga todos os User IDs do grupo (padrão: -1003042756853)",
     "cataloginfo [group_id]": "Mostra informações do catálogo salvo",
     "exportcat [group_id]": "Exporta lista de User IDs em arquivo .txt",
     "searchcat [group_id] [user_id]": "Verifica se um User ID está no catálogo",
