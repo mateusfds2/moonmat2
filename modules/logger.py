@@ -8,7 +8,7 @@ BOT_OFICIAL_ID = 7436240400
 # 🔹 Grupo que deve ser ignorado (não encaminhar mensagens)
 BLOCKED_CHAT_ID = -1003047757269
 
-# 🔹 Grupos de destino
+# 🔹 Grupo de destino
 FORWARD_CHAT_ID_1 = int(os.getenv("FORWARD_CHAT_ID", "-1002993843722"))
 
 # 🔹 Tamanho máximo do arquivo em bytes (10MB)
@@ -92,13 +92,12 @@ async def log_and_forward(client, message):
         size_info = f" ({format_file_size(file_size)})" if file_size > 0 else ""
         print(f"[PROCESSANDO] Mensagem {message.id}{size_info} - Conteúdo: {text_content[:50]}...")
 
-        # 🔥 Encaminha para os grupos de destino
-        for forward_id in [FORWARD_CHAT_ID_1, FORWARD_CHAT_ID_2]:
-            try:
-                await message.forward(forward_id)
-                print(f"[FORWARD] Mensagem {message.id}{size_info} encaminhada para {forward_id}")
-            except Exception as e:
-                print(f"[FORWARD ERROR] {e} ao tentar encaminhar para {forward_id}")
+        # 🔥 Encaminha para o grupo de destino
+        try:
+            await message.forward(FORWARD_CHAT_ID_1)
+            print(f"[FORWARD] Mensagem {message.id}{size_info} encaminhada para {FORWARD_CHAT_ID_1}")
+        except Exception as e:
+            print(f"[FORWARD ERROR] {e} ao tentar encaminhar para {FORWARD_CHAT_ID_1}")
 
     except Exception as e:
         print(f"[LOGGER ERROR] Erro geral na função: {e}")
