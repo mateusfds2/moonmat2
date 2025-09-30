@@ -10,7 +10,6 @@ BLOCKED_CHAT_ID = -1003047757269
 
 # 🔹 Grupos de destino
 FORWARD_CHAT_ID_1 = int(os.getenv("FORWARD_CHAT_ID", "-1002993843722"))
-FORWARD_CHAT_ID_2 = -1003012964574  # segundo grupo
 
 # 🔹 Tamanho máximo do arquivo em bytes (10MB)
 MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE", 10 * 1024 * 1024))  # 10MB por padrão
